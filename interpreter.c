@@ -7,12 +7,10 @@
 #include <ctype.h>
 #include "linkedlist.h"
 #include "talloc.h"
-//TODO: --letstar--, letrec, set!, --begin--, --and--, --or--
-//prims: -,+,>,<
-//note review error display in prim less than and greater than
-//declaring functions for use
+
+
 void printItem(Value *tree);
-Value *lookupSymbol(Value *symbol, Frame *frame);
+Value *lookupSymbol(Value *tree, Frame *frame);
 Value *evalIf(Value *args, Frame *frame);
 Value *evalLet (Value *args, Frame *frame);
 Value *evalLambda(Value *args, Frame *frame);
@@ -32,6 +30,9 @@ Value *primitiveSubtract(Value *args);
 Value *primitiveGreaterThan(Value *args);
 Value *primitiveLessThan(Value *args);
 Value *primitiveEqualsTo(Value *args);
+Value *evalLetRec(Value *args, Frame *frame);
+Value *evalSet(Value *args, Frame *frame);
+
 //Evaluates Value tree with given Frame
 Value *eval(Value *tree, Frame *frame){
 	//non special forms: just return the Value struct
@@ -51,15 +52,10 @@ Value *eval(Value *tree, Frame *frame){
 		case CLOSURE_TYPE:
 			return tree;
 			break;
-		case PRIMITIVE_TYPE:
-			return tree;
-			break;
 		//if symbol type, lookup the symbol and return ptr to value from given
 		//frame
-		case SYMBOL_TYPE:{
-			Value *args = cdr(tree);
+		case SYMBOL_TYPE:
 			return lookupSymbol(tree,frame);
-		}
 			break;
 		case CONS_TYPE:
 		{	//initialize function keyword and args
@@ -89,11 +85,15 @@ Value *eval(Value *tree, Frame *frame){
 					return evalAnd(args,frame);
 			} else if (!strcmp(first->s,"let*")){
 					return evalLetStar(args,frame);
-			} 
+			} else if (!strcmp(first->s,"letrec")){
+					return evalLetRec(args,frame);
+			} else if (!strcmp(first->s,"set!") || !strcmp(first->s,"set")){
+					return evalSet(args,frame);
+			}
 			else if (!strcmp(first->s,"or")){
 					return evalOr(args,frame);
 			} else {
-					Value *first = car(tree);
+					//Value *first = car(tree);
 					Value *evaledOperator = eval(first, frame);
 					Value *evaledArgs = makeNull();
 					while (args->type != NULL_TYPE){
@@ -115,17 +115,18 @@ Value *eval(Value *tree, Frame *frame){
 			return tree;
 			break;
 	}
-	printf("EVALUATION ERROR:ERROR");
 	return tree;
 }
 
 
 Value *apply(Value *function, Value *args){
 	//Check to make sure applying a procedure
+
 	if (function->type != CLOSURE_TYPE){
 		printf("EVALUATION ERROR:not calling on closure type");
 		texit(1);
 	}
+
 	//create the Frame to bind args to
 	Frame *newFrame = talloc(sizeof(Frame));
 	newFrame->bindings = makeNull();
@@ -153,6 +154,7 @@ Value *apply(Value *function, Value *args){
 
 //Looks up symbol in given frame
 Value *lookupSymbol(Value *symbol, Frame *frame) {
+
 	//check looking up a symbol type
 	if (symbol->type != SYMBOL_TYPE){
 		printf("EVALUATION ERROR: SYMBOL ERROR");
@@ -165,20 +167,22 @@ Value *lookupSymbol(Value *symbol, Frame *frame) {
 		while(bindings->type != NULL_TYPE){
 			Value *curBind = car(bindings);
 			//reminder: binding storage: car of curBind is symbol, cdr of curBind is the value
-			if(!strcmp(symbol->s,(car(curBind)->s))){
+			
+			if(!strcmp(symbol->s,(car(curBind)->s))) {
 				return cdr(curBind);
 			} else {
 				bindings = cdr(bindings);
 			}
 		}
-
 		frame = frame->parent;
 	}
 	//at this point, symbol is not found in frame
 	printf("EVALUATION ERROR: ");
-	printf("SYMBOL NOT FOUND");
+	printf("%s",symbol->s);
+	printf(" SYMBOL NOT FOUND");
 	texit(1);
-	return frame->bindings;
+	return symbol;
+
 }
 
 //Evaluates special form if
@@ -239,6 +243,7 @@ Value *evalLet (Value *args, Frame *frame){
 	}
 	printf("EVALUATION ERROR: at end");
 	return args;
+
 }
 //evaluate lambda special form and returns closure
 Value *evalLambda(Value *args, Frame *frame){
@@ -321,6 +326,7 @@ Value *evalDefine (Value *args, Frame *frame){
 		printf("EVALUATION ERROR: NULL ERROR");
 		texit(1);
 	}
+	
 	// takes bindings and modifies global frame
 	Value *expression = eval(car(cdr(args)),frame);
 	Value *newBinds = cons(car(args),expression);
@@ -328,6 +334,7 @@ Value *evalDefine (Value *args, Frame *frame){
 	Value *toReturn = talloc(sizeof(Value));
 	toReturn->type = VOID_TYPE;
 	return toReturn;
+
 }
 //printing function tree, reworked from linkedlist.c
 void printItem(Value *tree) {
@@ -395,7 +402,7 @@ void printItem(Value *tree) {
 	}
 }
 // adds primitives to main (top level) binding list
-void bind(char *name, Value *(*function)(struct Value *),Frame *frame){
+void bind(char *name, Value *(*function)(struct Value *),Frame *frame) {
 	//init value, set pf to point to passed in function, set type as primitive
 	Value *val = talloc(sizeof(Value));
 	val->type = PRIMITIVE_TYPE;
@@ -421,7 +428,7 @@ Value *primitiveAdd(Value *args) {
         } else if (car(args)->type == DOUBLE_TYPE){
 						//if real number is encountered, adjust flag so double type is returned
 						real = true;
-            result += car(args)->d;
+            result += (double) car(args)->d;
             args = cdr(args);
         } else {
             printf("EVALUATION ERROR : arguments given are not ints or doubles");
@@ -440,6 +447,7 @@ Value *primitiveAdd(Value *args) {
 			sum->i = (int) result;
 			return sum;
 		}
+	
 }
 
 Value *primitiveNull(Value *args) {
@@ -496,87 +504,100 @@ Value *primitiveCons(Value *args){
 }
 
 Value *evalAnd(Value *args, Frame *frame){
-	if(length(args) != 2){
-		printf("EVALUATION ERROR: NOT GIVEN TWO ARGS");
-		texit(1);
-	}
-	Value *first = eval(car(args),frame);
-	Value *second = eval(car(cdr(args)),frame);
-	Value *toReturn = talloc(sizeof(Value));
-	toReturn->type = BOOL_TYPE;
-	if (first->type == BOOL_TYPE && second->type == BOOL_TYPE){
-		if (!strcmp(first->s,"t") && !strcmp(second->s,"t")){
-			toReturn->s = "t";
-		} else {
-			toReturn->s = "f";
-		}
-	} else {
-		printf("EVALUATION ERROR: NOT GIVEN BOOL ARGS");
-		texit(1);
-	}
-	return toReturn;
+	Value *val;
+	//evaluate each arg under curFrame
+  for(int i = length(args); i > 0; i--){
+    val = eval(car(args), frame);
+    if(val->type != BOOL_TYPE && val->type != VOID_TYPE){
+      printf("EVALUATION ERROR: args must be boolean expressions");
+      texit(1);
+    }
+		//return BOOL_TYPE false Value if any arg evaluates to false false
+    if(val->type == BOOL_TYPE && !strcmp(val->s,"f")){
+      return val;
+    }
+    args = cdr(args);
+  }
+	//if everything evaluated to true (i.e. not false), then create a new
+	//BOOL_TYPE true value and return it;
+  Value *temp = makeNull();
+  temp->type = BOOL_TYPE;
+  temp->s = "t";
+  return temp;
+}
+//Same logic as Eval And, except returns the True bool value in the for loop
+// and false bool value if no args evaluated to true
+Value *evalOr(Value *args, Frame *frame){
+	Value *val;
+  for(int i = length(args); i > 0; i--){
+    val = eval(car(args), frame);
+    if(val->type != BOOL_TYPE && val->type != VOID_TYPE){
+      printf("EVALUATION ERROR: args must be boolean expressions");
+      texit(1);
+    }
+    if(val->type == BOOL_TYPE && !strcmp(val->s,"t")){
+      return val;
+    }
+    args = cdr(args);
+  }
+  Value *temp = makeNull();
+  temp->type = BOOL_TYPE;
+  temp->s = "f";
+  return temp;
 }
 
-Value *evalOr(Value *args, Frame *frame){
-	if(length(args) != 2) {
-    printf("EVALUATION ERROR: WRONG NUM ARGS");
-		texit(1);
-	}
 
-	Value *first = eval(car(args), frame);
-	Value *second = eval(car(cdr(args)), frame);
-	Value *toReturn = talloc(sizeof(Value));
-	toReturn->type = BOOL_TYPE;
-	if(first->type == BOOL_TYPE && second->type == BOOL_TYPE) {
-		if ( !strcmp(first->s,"t") || !strcmp(second->s,"t") ){
-			toReturn->s = "t";
-		} else {
-			toReturn->s = "f";
-		}
-	} else {
-			printf("EVALUATION ERROR");
-			texit(1);
-	}
-	return toReturn;
-	}
 
+
+//note: not fully funcitonal
 Value *evalLetStar(Value *args, Frame *frame){
-  if(length(args) != 2){
+	  if(length(args) != 2){
     printf("EVALUATION ERROR : INCORRECT NUMBER OF ARGS");
     texit(1);
   }
-  Frame *curFrame = talloc(sizeof(Frame));
-  curFrame->bindings = makeNull();
-  curFrame->parent = frame;
-  Value *listOfBindings = car(args);
-  while(listOfBindings->type != NULL_TYPE){
-    Value *pair = car(listOfBindings);
-    
-		if (pair->type != CONS_TYPE){
-			printf("ERROR: NOT CONS TYPE");
-			texit(1);
-		} if (length(pair) != 2) {
-			printf("ERROR: bindings wrong length");
-		} if (car(pair)->type != SYMBOL_TYPE){
-			printf("ERROR: assigning to not a symbol");
+
+	Value *pairs = car(args);
+	Value *body = car(cdr(args));
+	Frame *local;
+
+	while (pairs->type != NULL_TYPE){
+		local = talloc(sizeof(Frame));
+		local->parent = frame;
+		Value *localBind = makeNull();
+		Value *curPair = car(pairs);
+		if(length(curPair) == 2){
+			if (car(curPair)->type == SYMBOL_TYPE) {
+				Value *evalResult = eval(car(cdr(curPair)),frame);
+				if (evalResult->type != NULL_TYPE){
+					Value *newBind = makeNull();
+					newBind = cons(evalResult,newBind);
+					newBind = cons(car(curPair),newBind);
+					localBind = cons(newBind,localBind);
+				}
+			}
+		}
+		else {
+			printf("EVLAUATION ERROR: curPair Length");
 			texit(1);
 		}
 
-    curFrame->bindings = cons(eval(car(cdr(pair)), curFrame),
-			      curFrame->bindings);
-    curFrame->bindings = cons(car(pair), curFrame->bindings);
-    listOfBindings = cdr(listOfBindings);
-  }
-  return evalBegin(cdr(args), curFrame);
+		local->bindings = localBind;
+		frame = local;
+		pairs = cdr(pairs);
+	}
+	return eval(body,local);
 }
 
+
+
 Value *evalBegin(Value *args, Frame *frame){
-	Value *val;
-	while(args->type != NULL_TYPE){
-		val = eval(car(args),frame);
+	//evals every arg input
+	while (cdr(args)->type != NULL_TYPE){
+		eval(car(args),frame);
 		args = cdr(args);
 	}
-	return val;
+	//return evald last arg
+	return eval(car(args),frame);
 }
 
 Value *primitiveSubtract(Value *args){
@@ -584,18 +605,18 @@ Value *primitiveSubtract(Value *args){
 	double first = 0.0;
 	double second = 0.0;
 	bool real = false;
-
+	//store number to subtract from in result, type it accordingly
 	if (car(args)->type == INT_TYPE){
 		first = (double)car(args)->i;
 		result += first;
 	} else if (car(args)->type == DOUBLE_TYPE){
 		real = true;
 		first = car(args)->d;
-		result += car(args)->d;
+		result += first;
 	} else {
-		printf("ERROR: FIRST ARG NOT DOUBLE OR INT");
+		printf("EVALUATION ERROR: FIRST ARG NOT DOUBLE OR INT");
 	}
-
+	//subtract second arg from result
 	if (car(cdr(args))->type == INT_TYPE){
 		second = (double)car(cdr(args))->i;
 		result -= second;
@@ -607,7 +628,7 @@ Value *primitiveSubtract(Value *args){
 		printf("ERROR: ARGS NOT DOUBLES OR INT");
 		texit(1);
 	}
-
+	// if encountered real number, return DOUBLE_TYPE, otherwise return INT_TYPE
 	Value *toReturn = talloc(sizeof(Value));
 	if (real){
 		toReturn->type = DOUBLE_TYPE;
@@ -630,7 +651,7 @@ Value *primitiveGreaterThan(Value *args){
 	Value *second = car(cdr(args));
 	Value *toReturn = talloc(sizeof(Value));
 	toReturn->type = BOOL_TYPE;
-
+	// extract the i/d attributes depending on type and compare accordingly
 	if (first->type == INT_TYPE){
 			if (second->type == INT_TYPE){
 				if (first->i > second->i){
@@ -663,12 +684,16 @@ Value *primitiveGreaterThan(Value *args){
 					}
 			} 
 	} else {
+		//At this point, neither double nor int types have been inputted
 		printf("EVALUATION ERROR");
 		texit(1);
 	}
+	//return boolean value reflecting comparision
 	return toReturn;
 }
 
+//both primitives below use very similar logic to primitiveGreaterThan, just 
+//having different conditions for constructing toReturn
 Value *primitiveLessThan(Value *args){
 
 	if (length(args)!=2){
@@ -753,3 +778,90 @@ Value *primitiveEqualsTo(Value *args) {
 	}
 	return toReturn;
 }
+
+
+//inits bindings to a frame, evaluates expressions and 
+//places in frames accordingly
+Value *evalLetRec(Value *args, Frame *frame){
+	Frame *curFrame = talloc(sizeof(Frame));
+  curFrame->parent = frame;
+  curFrame->bindings = makeNull();
+  Value *varList = car(args);
+
+  while (varList->type != NULL_TYPE) {
+    Value *curPair = car(varList);
+      if (car(curPair)->type != SYMBOL_TYPE) {
+          printf("EVALUATION ERROR: not binding with symbol type");
+          texit(1);
+      }
+      Value *var = car(curPair);
+      Value *undefinedVal = talloc(sizeof(Value));
+      undefinedVal->type = BOOL_TYPE;
+      undefinedVal->s = "f";
+      Value *newBinding = cons(var, undefinedVal);
+      curFrame->bindings = cons(newBinding, curFrame->bindings);
+      varList = cdr(varList);
+    }
+
+    varList = car(args);
+    while (varList->type != NULL_TYPE) {
+		Value *curPair = car(varList);
+        Value *var = car(curPair);
+        Value *expr = car(cdr(curPair));
+        expr = eval(expr, curFrame);
+        bool bound = false;
+				Frame *frameList = curFrame;
+        while (frameList != NULL && bound == false) {
+					Value *bindings = frameList->bindings;
+						while (bindings->type != NULL_TYPE && bound == false) {
+                        Value *curBind = car(bindings);
+                        if (!strcmp(var->s, car(curBind)->s)) {
+                            curBind->c.cdr = expr;
+                            bound = true;
+                        } else {
+                            bindings = cdr(bindings);
+                        }
+                    }
+                    frameList = frameList->parent;
+                }
+                varList = cdr(varList);
+            }
+            Value *body = cdr(args);
+            if (body->type != NULL_TYPE) {
+                while(cdr(body)->type != NULL_TYPE) {
+                    eval(car(body), curFrame);
+                    body = cdr(body);
+                }
+                return eval(car(body), curFrame);
+            }
+            else {
+                printf("EVALUATION ERROR: body is null");
+                texit(1);
+            }
+}
+//Find first symbol that is in car(args) in frame, replace it with
+//evald next arg
+Value *evalSet(Value *args, Frame *frame){
+	Value *result = eval(car(cdr(args)),frame);
+	Value *var = car(args);
+	while (frame != NULL){
+		Value *binds = frame->bindings;
+		while (binds->type != NULL_TYPE){
+			Value *curBind = car(binds);
+			if (!strcmp(var->s,car(curBind)->s)){
+				curBind->c.cdr= result;
+				Value *toReturn = talloc(sizeof(Value));
+				toReturn->type = VOID_TYPE;
+				return toReturn;
+			} else {
+				binds = cdr(binds);
+			}
+		} frame = frame->parent;
+	}
+	printf("EVALUATION ERROR: BIND NOT FOUND");
+	texit(1);
+	Value *err = talloc(sizeof(Value));
+	err->type = VOID_TYPE;
+	return err;
+}
+
